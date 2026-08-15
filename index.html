@@ -627,8 +627,35 @@ var normPat=function(s){return String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,
 var ULT_ERROR='';
 function esperar(ms){return new Promise(function(s){setTimeout(s,ms)})}
 
-/* Guarda en la nube del artefacto si existe; si no, en este navegador. */
-var ALM=(function(){
+/* Dónde se guardan los datos, en orden de preferencia:
+   1. la planilla de Google (si está configurada) — se comparte entre todos los dispositivos
+   2. la nube del artefacto de Claude
+   3. el navegador de este dispositivo */
+var LLAVE_URL='LL_hoja_url', LLAVE_CLAVE='LL_hoja_clave';
+function hojaConfig(){
+  try{return {url:localStorage.getItem(LLAVE_URL)||'',clave:localStorage.getItem(LLAVE_CLAVE)||''}}
+  catch(e){return {url:'',clave:''}}
+}
+async function pedirHoja(cuerpo){
+  var cfg=hojaConfig();
+  if(!cfg.url)throw new Error('la planilla no está configurada');
+  cuerpo.clave=cfg.clave;
+  var r=await fetch(cfg.url,{method:'POST',redirect:'follow',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:JSON.stringify(cuerpo)});
+  if(!r.ok)throw new Error('la planilla respondió '+r.status);
+  var t=await r.text(),d;
+  try{d=JSON.parse(t)}catch(e){throw new Error('respuesta inesperada de Google (¿publicaste la app para "cualquier persona"?)')}
+  if(!d.ok)throw new Error(d.error||'error en la planilla');
+  return d;
+}
+function armarALM(){
+  var cfg=hojaConfig();
+  if(cfg.url)return{tipo:'planilla',
+    get:async function(k){var d=await pedirHoja({accion:'leer',dato:k});
+      return d.valor?{value:d.valor}:null},
+    set:function(k,v){return pedirHoja({accion:'escribir',dato:k,valor:v})},
+    del:function(k){return pedirHoja({accion:'borrar',dato:k})}};
   var nube=(typeof window.storage==='object'&&window.storage&&typeof window.storage.set==='function');
   if(nube)return{tipo:'nube',
     get:function(k){return window.storage.get(k,true)},
@@ -639,9 +666,11 @@ var ALM=(function(){
       return Promise.resolve(v==null?null:{value:v})},
     set:function(k,v){return new Promise(function(res,rej){
       try{localStorage.setItem('LL_'+k,v);res(true)}
-      catch(e){rej(new Error('se llenó el espacio del navegador, borrá alguna foto vieja'))}})},
+      catch(e){rej(new Error('se llenó el espacio del navegador'))}})},
     del:function(k){try{localStorage.removeItem('LL_'+k)}catch(e){}return Promise.resolve(true)}};
-})();
+}
+var ALM=armarALM();
+var NOMBRE_ALM={planilla:'en la planilla de Google',nube:'en la nube de la app',local:'en este dispositivo'};
 
 async function conReintento(fn){
   for(var i=0;i<3;i++){
@@ -650,11 +679,13 @@ async function conReintento(fn){
   }
   return false;
 }
+var FALLO_CARGA='';
 async function cargar(){
   try{var r=await ALM.get(K_FLOTA);if(r&&r.value){var d=JSON.parse(r.value);
     DB.autos=d.autos||{};DB.turnos=d.turnos||[];DB.remitos=d.remitos||[];
     DB.presupuestos=d.presupuestos||[];DB.precios=d.precios||{aceite:[],filtro:[]};
-    DB.config=Object.assign(DB.config,d.config||{});}}catch(e){}
+    DB.config=Object.assign(DB.config,d.config||{});}}
+  catch(e){FALLO_CARGA=(e&&e.message)||'no se pudo leer';}
   if(!DB.config.whatsapp)DB.config.whatsapp='11 3518-6542';
   if(!DB.config.nombre)DB.config.nombre='Lubri Lucas';
 }
@@ -2372,9 +2403,19 @@ function formConfig(){
       '<div class="msg" id="m3"></div>'+
       '<button class="btn ambar" style="margin-top:14px" onclick="guardarConfig()">Guardar ajustes</button>'+
     '</div><div class="panelx">'+
+      '<label>Dónde se guardan los datos</label>'+
+      '<div class="dato-alm">Ahora mismo: <b>'+NOMBRE_ALM[ALM.tipo]+'</b><br>'+
+        'Autos cargados: <b>'+Object.keys(DB.autos).length+'</b>'+
+        (FALLO_CARGA?'<br><span style="color:var(--usado)">Último error: '+esc(FALLO_CARGA)+'</span>':'')+'</div>'+
+      '<label>Planilla de Google (para compartir entre dispositivos)</label>'+
+      '<input id="c_hu" value="'+esc(hojaConfig().url)+'" placeholder="https://script.google.com/macros/s/…/exec">'+
+      '<div class="g2"><div><label>Clave</label><input id="c_hc" value="'+esc(hojaConfig().clave)+'" placeholder="lubrilucas2026"></div>'+
+      '<div><label>&nbsp;</label><button class="btn linea" style="width:100%" onclick="probarHoja()">Probar conexión</button></div></div>'+
+      '<div class="fila" style="margin-top:10px"><button class="btn ambar" onclick="guardarHoja()">Conectar planilla</button>'+
+      (hojaConfig().url?'<button class="btn linea" onclick="subirTodo()">Subir lo que tengo ahora</button>'+
+        '<button class="btn linea" onclick="desconectarHoja()">Desconectar</button>':'')+'</div>'+
+      '<div class="msg" id="mh"></div>'+
       '<label>Copia de seguridad</label>'+
-      '<div class="dato-alm">Guardado actual: <b>'+(ALM.tipo==='nube'?'en la nube de la app':'en este dispositivo (navegador)')+'</b><br>'+
-        'Autos cargados: <b>'+Object.keys(DB.autos).length+'</b></div>'+
       '<div class="fila" style="margin-top:13px"><button class="btn linea chico" onclick="exportarDatos()">Descargar copia</button>'+
       '<label class="btn linea chico" style="margin:0;letter-spacing:0;text-transform:none;font-size:12px;color:#BFE6F6">Restaurar copia'+
       '<input type="file" accept="application/json" style="display:none" onchange="importarDatos(this.files[0],document.getElementById(\'m3\'))"></label></div>'+
