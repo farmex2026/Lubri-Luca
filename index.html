@@ -2447,6 +2447,62 @@ async function guardarConfig(){
   else{m.className='msg err';m.textContent='No se pudo guardar. Reintentá.'}
 }
 
+/* ---------- conexión con la planilla ---------- */
+function leerCamposHoja(){
+  return {url:document.getElementById('c_hu').value.trim(),
+          clave:document.getElementById('c_hc').value.trim()};
+}
+async function probarHoja(){
+  var m=document.getElementById('mh'),c=leerCamposHoja();
+  if(!c.url){m.className='msg err';m.textContent='Pegá primero la dirección que te dio Google.';return}
+  m.className='msg';m.textContent='Probando…';
+  try{
+    var r=await fetch(c.url,{method:'POST',redirect:'follow',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify({accion:'ping',clave:c.clave})});
+    var d=JSON.parse(await r.text());
+    if(!d.ok)throw new Error(d.error);
+    m.className='msg';m.textContent='Conexión correcta. La planilla tiene '+d.filas+' filas. Ahora tocá "Conectar planilla".';
+  }catch(e){m.className='msg err';
+    m.textContent='No pude conectar: '+((e&&e.message)||e)+'. Revisá la dirección, la clave, y que la app esté publicada para "cualquier persona".'}
+}
+async function guardarHoja(){
+  var m=document.getElementById('mh'),c=leerCamposHoja();
+  if(!c.url){m.className='msg err';m.textContent='Falta la dirección de la planilla.';return}
+  try{localStorage.setItem(LLAVE_URL,c.url);localStorage.setItem(LLAVE_CLAVE,c.clave)}
+  catch(e){m.className='msg err';m.textContent='El navegador no me deja guardar la configuración.';return}
+  ALM=armarALM();
+  m.className='msg';m.textContent='Planilla conectada. Leyendo lo que ya tiene…';
+  var antes=Object.keys(DB.autos).length;
+  await cargar();
+  var ahora=Object.keys(DB.autos).length;
+  if(!ahora&&antes){
+    m.textContent='Conectada. La planilla está vacía: tocá "Subir lo que tengo ahora" para pasarle tus '+antes+' autos.';
+    setTimeout(formConfig,1600);
+  }else formConfig();
+}
+async function desconectarHoja(){
+  if(!confirm('¿Dejar de usar la planilla? Los datos siguen en Google, pero esta app vuelve a guardar en el dispositivo.'))return;
+  try{localStorage.removeItem(LLAVE_URL);localStorage.removeItem(LLAVE_CLAVE)}catch(e){}
+  ALM=armarALM();await cargar();formConfig();
+}
+async function subirTodo(){
+  var m=document.getElementById('mh');
+  m.className='msg';m.textContent='Subiendo datos…';
+  var ok=await guardar();
+  if(!ok){m.className='msg err';m.textContent='No pude subir: '+(ULT_ERROR||'reintentá');return}
+  var pats=Object.keys(DB.autos),subidas=0;
+  for(var i=0;i<pats.length;i++){
+    var f=null;
+    try{f=localStorage.getItem('LL_foto:'+pats[i])}catch(e){}
+    if(f){m.textContent='Subiendo foto '+(subidas+1)+'…';
+      if(await setFoto(pats[i],f))subidas++;
+      await esperar(250);}
+  }
+  m.className='msg';
+  m.textContent='Listo: '+pats.length+' autos'+(subidas?' y '+subidas+' fotos':'')+' guardados en la planilla.';
+}
+
 /* ---- ejemplo ---- */
 async function cargarEjemplo(){
   DB.autos['AB123CD']={marca:'Volkswagen',modelo:'Gol Trend',anio:'2016',cliente:'Marcela Gómez',telefono:'11 5555 5555',
