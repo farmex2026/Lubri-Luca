@@ -580,6 +580,15 @@
   /* al imprimir, solo la hoja */
 
 
+  .logo.cargando{animation:latir 1.4s ease-in-out infinite}
+  @keyframes latir{0%,100%{opacity:.55;transform:scale(.97)}50%{opacity:1;transform:scale(1)}}
+  .puntitos{display:flex;gap:7px;justify-content:center;margin-top:18px}
+  .puntitos i{width:7px;height:7px;border-radius:50%;background:var(--neon);opacity:.3;
+    animation:puntito 1.1s ease-in-out infinite}
+  .puntitos i:nth-child(2){animation-delay:.15s}
+  .puntitos i:nth-child(3){animation-delay:.3s}
+  @keyframes puntito{0%,100%{opacity:.25;transform:translateY(0)}50%{opacity:1;transform:translateY(-4px)}}
+
   @page{size:A4;margin:10mm}
   @media print{
     body.imprimir-hoja::before,body.imprimir-hoja::after{display:none}
@@ -684,16 +693,52 @@ async function conReintento(fn){
   return false;
 }
 var FALLO_CARGA='';
-async function cargar(){
-  try{var r=await ALM.get(K_FLOTA);if(r&&r.value){var d=JSON.parse(r.value);
-    DB.autos=d.autos||{};DB.turnos=d.turnos||[];DB.remitos=d.remitos||[];
-    DB.presupuestos=d.presupuestos||[];DB.precios=d.precios||{aceite:[],filtro:[]};
-    DB.config=Object.assign(DB.config,d.config||{});}}
-  catch(e){FALLO_CARGA=(e&&e.message)||'no se pudo leer';}
+var K_ADMIN='admin_v1';
+function aplicarFlota(d){
+  DB.autos=d.autos||{};
+  DB.config=Object.assign(DB.config,d.config||{});
+  // datos viejos: antes venía todo junto en una sola bolsa
+  if(d.turnos)DB.turnos=d.turnos;
+  if(d.remitos)DB.remitos=d.remitos;
+  if(d.presupuestos)DB.presupuestos=d.presupuestos;
+  if(d.precios)DB.precios=d.precios;
+}
+function guardarCache(k,txt){try{localStorage.setItem('cache:'+k,txt)}catch(e){}}
+function leerCache(k){try{return localStorage.getItem('cache:'+k)}catch(e){return null}}
+
+/* soloFicha = true carga únicamente lo que necesita el cliente (mucho más rápido) */
+async function cargar(soloFicha){
+  try{
+    var r=await ALM.get(K_FLOTA);
+    if(r&&r.value){aplicarFlota(JSON.parse(r.value));guardarCache(K_FLOTA,r.value);FALLO_CARGA=''}
+  }catch(e){FALLO_CARGA=(e&&e.message)||'no se pudo leer';}
+  if(!soloFicha){
+    try{
+      var a=await ALM.get(K_ADMIN);
+      if(a&&a.value){var d=JSON.parse(a.value);
+        DB.turnos=d.turnos||DB.turnos||[];DB.remitos=d.remitos||DB.remitos||[];
+        DB.presupuestos=d.presupuestos||DB.presupuestos||[];
+        DB.precios=d.precios||DB.precios||{aceite:[],filtro:[]};}
+    }catch(e){}
+  }
   if(!DB.config.whatsapp)DB.config.whatsapp='11 3518-6542';
   if(!DB.config.nombre)DB.config.nombre='Lubri Lucas';
 }
-async function guardar(){return conReintento(function(){return ALM.set(K_FLOTA,JSON.stringify(DB))})}
+/* muestra lo último que se vio en este dispositivo, sin esperar a la red */
+function cargarDeCache(){
+  var t=leerCache(K_FLOTA);
+  if(!t)return false;
+  try{aplicarFlota(JSON.parse(t));return true}catch(e){return false}
+}
+async function guardar(){
+  var flota=JSON.stringify({autos:DB.autos,config:DB.config});
+  var admin=JSON.stringify({turnos:DB.turnos||[],remitos:DB.remitos||[],
+    presupuestos:DB.presupuestos||[],precios:DB.precios||{aceite:[],filtro:[]}});
+  var ok=await conReintento(function(){return ALM.set(K_FLOTA,flota)});
+  if(!ok)return false;
+  guardarCache(K_FLOTA,flota);
+  return conReintento(function(){return ALM.set(K_ADMIN,admin)});
+}
 async function getFoto(p){try{var r=await ALM.get(K_FOTO+p);return r?r.value:null}catch(e){return null}}
 async function setFoto(p,v){return conReintento(function(){return ALM.set(K_FOTO+p,v)})}
 
@@ -786,7 +831,8 @@ async function vistaCliente(pat){
   if(!a){app.innerHTML='<div class="centro"><img class="logo" src="'+LOGO+'" alt="Lubri Lucas">'+
     '<div class="eyebrow">Sin resultados</div><h1>Ficha no encontrada</h1><p>La patente '+esc(pat)+' todavía no está cargada. Pedísela al taller y la damos de alta.</p>'+
     '<button class="btn linea" onclick="location.hash=\'\'">Volver</button></div>';return}
-  var foto=await getFoto(pat), pr=proximo(a), vs=(a.visitas||[]), v=vs.slice().reverse(), c=DB.config;
+  var pr=proximo(a), vs=(a.visitas||[]), v=vs.slice().reverse(), c=DB.config;
+  var foto=leerCache('foto:'+pat);
   var ult=vs[vs.length-1]||{};
   var nombre=String(a.cliente||'').trim().split(' ')[0];
 
@@ -852,6 +898,21 @@ async function vistaCliente(pat){
 
   var f=app.querySelector('.lleno');
   if(f)setTimeout(function(){f.style.width=f.dataset.w+'%'},60);
+
+  // la foto llega después, sin frenar el resto de la ficha
+  getFoto(pat).then(function(d){
+    if(!d||(location.hash||'').indexOf(pat)<0)return;
+    guardarCache('foto:'+pat,d);
+    var hero=app.querySelector('.hero');
+    if(!hero)return;
+    var vieja=hero.querySelector('.foto');
+    if(vieja&&vieja.src===d)return;
+    var img=document.createElement('img');
+    img.className='foto';img.alt='Foto de tu auto';img.src=d;
+    var hueco=hero.querySelector('.sinfoto');
+    if(hueco)hueco.replaceWith(img);
+    else if(vieja)vieja.src=d;
+  });
 }
 
 /* ============ inicio ============ */
@@ -2695,11 +2756,33 @@ function planillaModelo(){
 }
 
 /* ============ router ============ */
+function pantallaCargando(){
+  wrap.className='wrap';
+  app.innerHTML='<div class="centro"><img class="logo cargando" src="'+LOGO+'" alt="Lubri Lucas">'+
+    '<div class="eyebrow">Buscando tu ficha</div>'+
+    '<div class="puntitos"><i></i><i></i><i></i></div></div>';
+}
 async function router(){
   var h=(location.hash||'').replace(/^#/,'');
   if(h.indexOf('p=')===0)return vistaCliente(normPat(h.slice(2)));
   return autorizado?vistaTaller():pedirPin();
 }
 window.addEventListener('hashchange',router);
-(async function(){await cargar();router()})();
+
+(async function(){
+  var esCliente=(location.hash||'').indexOf('#p=')===0;
+  if(esCliente){
+    pantallaCargando();
+    // si ya entró antes desde este celular, se lo mostramos al instante
+    if(cargarDeCache()){
+      router();
+      cargar(true).then(function(){if((location.hash||'').indexOf('#p=')===0)router()});
+      return;
+    }
+    await cargar(true);
+    return router();
+  }
+  await cargar();
+  router();
+})();
 </script>
