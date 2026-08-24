@@ -708,13 +708,16 @@ function leerCache(k){try{return localStorage.getItem('cache:'+k)}catch(e){retur
 
 /* soloFicha = true carga únicamente lo que necesita el cliente (mucho más rápido) */
 async function cargar(soloFicha){
+  // los dos pedidos salen juntos, no uno después del otro
+  var pFlota=ALM.get(K_FLOTA);
+  var pAdmin=soloFicha?null:ALM.get(K_ADMIN).catch(function(){return null});
   try{
-    var r=await ALM.get(K_FLOTA);
+    var r=await pFlota;
     if(r&&r.value){aplicarFlota(JSON.parse(r.value));guardarCache(K_FLOTA,r.value);FALLO_CARGA=''}
   }catch(e){FALLO_CARGA=(e&&e.message)||'no se pudo leer';}
-  if(!soloFicha){
+  if(pAdmin){
     try{
-      var a=await ALM.get(K_ADMIN);
+      var a=await pAdmin;
       if(a&&a.value){var d=JSON.parse(a.value);
         DB.turnos=d.turnos||DB.turnos||[];DB.remitos=d.remitos||DB.remitos||[];
         DB.presupuestos=d.presupuestos||DB.presupuestos||[];
@@ -940,9 +943,17 @@ function pedirPin(){
   document.getElementById('pin').addEventListener('keydown',function(e){if(e.key==='Enter')chequearPin()});
   document.getElementById('pin').focus();
 }
-function chequearPin(){
-  if(document.getElementById('pin').value===String(DB.config.pin)){autorizado=true;vistaTaller()}
-  else document.getElementById('mp').textContent='PIN incorrecto. Probá de nuevo.';
+async function chequearPin(){
+  var m=document.getElementById('mp');
+  if(document.getElementById('pin').value!==String(DB.config.pin)){
+    m.className='msg err';m.textContent='PIN incorrecto. Probá de nuevo.';return}
+  autorizado=true;
+  if(CARGA){
+    m.className='msg';m.textContent='Cargando los datos…';
+    try{await CARGA}catch(e){}
+    CARGA=null;
+  }
+  vistaTaller();
 }
 
 var MENU=[
@@ -1133,6 +1144,9 @@ function vistaTaller(){
   var porVencer=pats.filter(function(p){var pr=proximo(DB.autos[p]);return pr&&pr.dias<=45}).slice(0,6);
 
   pantalla('inicio','Inicio','Los turnos del día y el calendario para agendar.',
+    (FALLO_CARGA?'<div class="aviso" style="margin:0 0 18px"><b>Ojo:</b> no pude leer la planilla de Google ('+
+      esc(FALLO_CARGA)+'). Estás viendo la última copia guardada en este dispositivo. '+
+      'No cargues datos nuevos hasta que vuelva la conexión, o se pueden pisar.</div>':'')+
     '<div class="buscador-grande">'+
       '<input id="bq" list="patsb" placeholder="Buscá por patente: AB123CD" autocomplete="off" '+
         'onkeydown="if(event.key===\'Enter\')buscarPat()">'+
@@ -2769,20 +2783,23 @@ async function router(){
 }
 window.addEventListener('hashchange',router);
 
-(async function(){
+var CARGA=null;
+(function(){
   var esCliente=(location.hash||'').indexOf('#p=')===0;
   if(esCliente){
     pantallaCargando();
-    // si ya entró antes desde este celular, se lo mostramos al instante
     if(cargarDeCache()){
       router();
       cargar(true).then(function(){if((location.hash||'').indexOf('#p=')===0)router()});
       return;
     }
-    await cargar(true);
-    return router();
+    CARGA=cargar(true);
+    CARGA.then(router);
+    return;
   }
-  await cargar();
-  router();
+  // el panel: la pantalla del PIN no necesita datos, se muestra ya
+  cargarDeCache();
+  pedirPin();
+  CARGA=cargar();
 })();
 </script>
