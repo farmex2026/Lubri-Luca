@@ -575,7 +575,11 @@
   .h-tabla .nu{text-align:right;width:104px;white-space:nowrap}
   .h-total{margin-top:auto;text-align:right;font-size:12px;font-weight:700;padding:0 8px}
   .h-total b{font-size:13.5px}
-  .h-obs{border-top:1px solid #000;padding:10px 9px;min-height:96px}
+  .h-pago{border-top:1px solid #000;padding:8px 9px;display:flex;gap:20px;flex-wrap:wrap;align-items:baseline}
+  .h-pago b{font-size:11px}
+  .h-pago span{font-size:11.5px}
+  .h-pago em{font-style:normal;font-weight:700;font-family:'Courier New',monospace;letter-spacing:.02em}
+  .h-obs{border-top:1px solid #000;padding:10px 9px;min-height:78px}
   @media (max-width:1100px){.grid-remito{grid-template-columns:1fr}}
   /* al imprimir, solo la hoja */
 
@@ -619,7 +623,7 @@ var LOGO='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQQAAAELCAMAAAAIgAjtAAAB
 /* ============ estado ============ */
 var VERSION='v3 · conexión Google';
 var K_FLOTA='flota_v1', K_FOTO='foto:';
-var DB={turnos:[],remitos:[],presupuestos:[],precios:{aceite:[],filtro:[]},config:{nombre:'Lubri Lucas',direccion:'',whatsapp:'11 3518-6542',pin:'1234',base:'',intKm:10000,intMeses:6,remitoPV:'0001',remitoNro:1,presuPV:'0001',presuNro:1,presuValidez:7,catalogo:[],rubro:'Lubricación + Diagnóstico'},autos:{}};
+var DB={turnos:[],remitos:[],presupuestos:[],precios:{aceite:[],filtro:[]},config:{nombre:'Lubri Lucas',direccion:'',whatsapp:'11 3518-6542',pin:'1234',base:'',intKm:10000,intMeses:6,remitoPV:'0001',remitoNro:1,presuPV:'0001',presuNro:1,presuValidez:7,alias:'lucasboxes',cbu:'0000003100088086958602',titular:'Lucas Sellecchia',banco:'Mercado Pago',catalogo:[],rubro:'Lubricación + Diagnóstico'},autos:{}};
 var app=document.getElementById('app'), wrap=document.getElementById('wrap');
 var autorizado=false;
 
@@ -1479,6 +1483,12 @@ function vistaRemito(pat){
           '<button class="btn linea" onclick="enviarRemito()">Enviar por WhatsApp</button>'+
           '<button class="btn linea" onclick="guardarRemito()">Guardar remito</button>'+
         '</div>'+
+        (textoPago()?'<label>Datos para transferir</label>'+
+          '<div class="dato-alm" style="white-space:pre-line">'+esc(textoPago())+'</div>'+
+          '<div class="fila" style="margin-top:9px">'+
+            '<button class="btn linea chico" onclick="mandarPago()">Mandar por WhatsApp</button>'+
+            '<button class="btn linea chico" onclick="navigator.clipboard.writeText(textoPago());this.textContent=\'Copiado\'">Copiar</button>'+
+          '</div>':'')+
       '</div>'+
       '<div id="hoja" class="hoja"></div>'+
     '</div>',
@@ -1543,6 +1553,14 @@ function usarCat(i){
 }
 function toggleSoloTotal(){leerREM();REM.soloTotal=!REM.soloTotal;pintarItems()}
 
+function textoPago(){
+  var c=DB.config,l=[];
+  if(c.alias)l.push('Alias: '+c.alias);
+  if(c.cbu)l.push('CVU: '+c.cbu);
+  if(c.titular)l.push('Titular: '+c.titular);
+  if(c.banco)l.push('('+c.banco+')');
+  return l.join('\n');
+}
 function hojaHTML(){
   var c=DB.config;
   var filas=REM.soloTotal?
@@ -1583,6 +1601,10 @@ function hojaHTML(){
         '<tbody>'+filas+'</tbody></table>'+
       '<div class="h-total">Total: <b>'+pesos(REM.total)+'</b></div>'+
     '</div>'+
+    (c.alias||c.cbu?'<div class="h-pago"><b>Transferencias'+(c.banco?' · '+esc(c.banco):'')+'</b>'+
+      (c.titular?'<span>Titular: <em>'+esc(c.titular)+'</em></span>':'')+
+      (c.alias?'<span>Alias: <em>'+esc(c.alias)+'</em></span>':'')+
+      (c.cbu?'<span>CVU/CBU: <em>'+esc(c.cbu)+'</em></span>':'')+'</div>':'')+
     '<div class="h-obs"><b>Observaciones:</b> '+esc(REM.obs||'')+'</div>'+
   '</div>';
 }
@@ -1633,6 +1655,12 @@ async function guardarRemito(){
   if(!ok){m.className='msg err';m.textContent='No se pudo guardar: '+(ULT_ERROR||'reintentá');return}
   m.textContent='Remito '+REM.nro+' guardado. El próximo será el '+nroRemito()+'.';
 }
+function mandarPago(){
+  var tel=waNum(document.getElementById('r_tel')?document.getElementById('r_tel').value:'');
+  if(!tel){avisarRem('Falta el teléfono del cliente.');return}
+  window.open('https://wa.me/'+tel+'?text='+encodeURIComponent(textoPago()),'_blank');
+}
+function avisarRem(t){var m=document.getElementById('mr');if(m){m.className='msg err';m.textContent=t}else alert(t)}
 async function enviarRemito(){
   leerREM();
   var m=document.getElementById('mr'),tel=waNum(REM.tel);
@@ -1652,10 +1680,12 @@ async function enviarRemito(){
     return;
   }
   var f=new File([blob],'Remito-'+REM.nro+'.pdf',{type:'application/pdf'});
+  var pago=textoPago(), waPago=pago?('https://wa.me/'+tel+'?text='+encodeURIComponent(pago)):'';
   if(navigator.canShare&&navigator.canShare({files:[f]})){
     try{
       await navigator.share({files:[f],text:texto,title:'Remito '+REM.nro});
-      m.className='msg';m.textContent='Se abrió el compartir: elegí WhatsApp, el contacto y confirmá el envío.';
+      m.className='msg';m.innerHTML='Se abrió el compartir: elegí WhatsApp y confirmá el envío.'+
+        (waPago?' Después <a href="'+waPago+'" target="_blank" rel="noopener">mandá los datos de pago</a> en un mensaje aparte.':'');
     }catch(e){m.className='msg';m.textContent='Envío cancelado. El remito ya quedó numerado.'}
     return;
   }
@@ -1663,8 +1693,8 @@ async function enviarRemito(){
   a.href=URL.createObjectURL(blob);a.download=f.name;a.click();
   m.className='msg';
   m.innerHTML='PDF <b>'+esc(f.name)+'</b> descargado. '+
-    '<a href="'+wa+'" target="_blank" rel="noopener">Abrir WhatsApp</a> y adjuntalo con el clip. '+
-    'El mensaje ya va escrito.';
+    '<a href="'+wa+'" target="_blank" rel="noopener">Abrir WhatsApp</a> y adjuntalo con el clip.'+
+    (waPago?'<br>Y acá los <a href="'+waPago+'" target="_blank" rel="noopener">datos para transferir</a>, van en un mensaje aparte para que los copie de un toque.':'');
 }
 
 /* ---------- LISTA DE PRECIOS ---------- */
@@ -1978,6 +2008,10 @@ function hojaPresuHTML(){
         '<tbody>'+filas+'</tbody></table>'+
       '<div class="h-total">Total: <b>'+pesos(PRES.total)+'</b></div>'+
     '</div>'+
+    (c.alias||c.cbu?'<div class="h-pago"><b>Transferencias'+(c.banco?' · '+esc(c.banco):'')+'</b>'+
+      (c.titular?'<span>Titular: <em>'+esc(c.titular)+'</em></span>':'')+
+      (c.alias?'<span>Alias: <em>'+esc(c.alias)+'</em></span>':'')+
+      (c.cbu?'<span>CVU/CBU: <em>'+esc(c.cbu)+'</em></span>':'')+'</div>':'')+
     '<div class="h-obs"><b>Observaciones:</b> '+esc(PRES.obs||'')+'</div>'+
   '</div>';
 }
@@ -2494,6 +2528,10 @@ function formConfig(){
       '<div class="g2"><div><label>Punto de venta (presupuestos)</label><input id="c_ppv" value="'+esc(c.presuPV||'0001')+'"></div>'+
       '<div><label>Próximo Nº de presupuesto</label><input id="c_pn" value="'+esc(c.presuNro||1)+'" inputmode="numeric"></div></div>'+
       '<label>Rubro (sale en los comprobantes)</label><input id="c_ru" value="'+esc(c.rubro||'')+'">'+
+      '<div class="g2"><div><label>Alias para transferencias</label><input id="c_al" value="'+esc(c.alias||'')+'" placeholder="lucasboxes"></div>'+
+      '<div><label>CVU / CBU</label><input id="c_cb" value="'+esc(c.cbu||'')+'" placeholder="0000003100088086958602"></div></div>'+
+      '<div class="g2"><div><label>Titular de la cuenta</label><input id="c_ti" value="'+esc(c.titular||'')+'" placeholder="Lucas Sellecchia"></div>'+
+      '<div><label>Banco o billetera</label><input id="c_bk" value="'+esc(c.banco||'')+'" placeholder="Mercado Pago"></div></div>'+
       '<div class="msg" id="m3"></div>'+
       '<button class="btn ambar" style="margin-top:14px" onclick="guardarConfig()">Guardar ajustes</button>'+
     '</div><div class="panelx">'+
@@ -2538,6 +2576,10 @@ async function guardarConfig(){
   DB.config.rubro=document.getElementById('c_ru').value.trim();
   DB.config.presuPV=document.getElementById('c_ppv').value.trim()||'0001';
   DB.config.presuNro=Number(String(document.getElementById('c_pn').value).replace(/\D/g,''))||1;
+  DB.config.alias=document.getElementById('c_al').value.trim();
+  DB.config.cbu=document.getElementById('c_cb').value.replace(/\s/g,'').trim();
+  DB.config.titular=document.getElementById('c_ti').value.trim();
+  DB.config.banco=document.getElementById('c_bk').value.trim();
   var m=document.getElementById('m3');
   if(await guardar()){m.className='msg';m.textContent='Ajustes guardados.';setTimeout(vistaTaller,500)}
   else{m.className='msg err';m.textContent='No se pudo guardar. Reintentá.'}
